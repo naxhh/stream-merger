@@ -6,17 +6,17 @@ import (
 )
 
 type DataPoint struct {
-	Time int `json:"measurement_time"`
+	Time     int    `json:"measurement_time"`
 	DeviceId string `json:"device_id"`
 }
 
 type Message struct {
-	DataPoint DataPoint
+	DataPoint  DataPoint
 	RawMessage []byte
 }
 
 type MergedMessage struct {
-	DataPoint DataPoint
+	DataPoint   DataPoint
 	RawMessages [][]byte
 }
 
@@ -25,11 +25,10 @@ func main() {
 	kafkaConsumer := createConsumer()
 	kafkaProducer := createProducer()
 
-    mergerChan := make(chan *Message, 100)
-    mergerOutChan := make(chan *MergedMessage, 100)
+	mergerChan := make(chan *Message, 100)
+	mergerOutChan := make(chan *MergedMessage, 100)
 
-
-    wg.Add(3)
+	wg.Add(3)
 	go consumer(kafkaConsumer, mergerChan, &wg)
 	go merger(mergerChan, mergerOutChan, &wg)
 	go producer(kafkaProducer, "output_merged", mergerOutChan, &wg)

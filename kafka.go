@@ -1,12 +1,11 @@
 package main
 
 import (
-	"fmt"
-	"sync"
 	"encoding/json"
+	"fmt"
 	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
+	"sync"
 )
-
 
 func consumer(consumer *kafka.Consumer, out chan<- *Message, wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -18,14 +17,14 @@ func consumer(consumer *kafka.Consumer, out chan<- *Message, wg *sync.WaitGroup)
 		fmt.Printf("Waiting for message\n")
 		msg, err := consumer.ReadMessage(-1)
 		if err == nil {
- 			dataPoint := DataPoint{}
+			dataPoint := DataPoint{}
 
-		    if err := json.Unmarshal(msg.Value, &dataPoint); err != nil {
-		    	fmt.Printf("Invalid data point discarded")
-		    } else {
-		    	// TODO: which type of message is this one?
+			if err := json.Unmarshal(msg.Value, &dataPoint); err != nil {
+				fmt.Printf("Invalid data point discarded")
+			} else {
+				// TODO: which type of message is this one?
 				out <- &Message{DataPoint: dataPoint, RawMessage: msg.Value}
-		    }
+			}
 		} else {
 			// The client will automatically try to recover from all errors.
 			fmt.Printf("Consumer error: %v (%v)\n", err, msg)
@@ -36,20 +35,20 @@ func consumer(consumer *kafka.Consumer, out chan<- *Message, wg *sync.WaitGroup)
 func producer(producer *kafka.Producer, topic string, in <-chan *MergedMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer producer.Close()
-	
+
 	for {
 		message := <-in
 		marshalledMessage, err := json.Marshal(message)
 
-	    if err != nil {
-    		fmt.Printf("Invalid merged message, can't marshal")
-	    	continue
-	    }
+		if err != nil {
+			fmt.Printf("Invalid merged message, can't marshal")
+			continue
+		}
 
 		// TODO: haven't checked how to produce on partition based on key
 		producer.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-			Value: marshalledMessage,
+			Value:          marshalledMessage,
 		}, nil)
 
 		producer.Flush(15 * 1000)

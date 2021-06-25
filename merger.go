@@ -1,58 +1,60 @@
 package main
 
 import (
-	"fmt"
 	"sync"
 )
 
-type struct State {
+type State struct {
 	storage map[string]*MergedMessage
 }
 
-func (s *State) getForDeviceId(deviceId string) : MergedMessage {
-	return storage[deviceId]
+func NewState() *State {
+	storage := make(map[string]*MergedMessage)
+
+	return &State{storage: storage}
 }
 
+func (s *State) initialize(deviceId string, dataPoint DataPoint, msg []byte) {
+	rawMessages := make([][]byte, 1)
+	rawMessages[0] = msg
+
+	s.storage[deviceId] = &MergedMessage{DataPoint: dataPoint, RawMessages: rawMessages}
+}
+
+func (s *State) get(deviceId string) *MergedMessage {
+	return s.storage[deviceId]
+}
+
+func (s *State) appendMessage(deviceId string, msg []byte) {
+	rawMessages := append(s.storage[deviceId].RawMessages, msg)
+	s.storage[deviceId].RawMessages = rawMessages
+}
 
 func merger(in <-chan *Message, out chan<- *MergedMessage, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	state := make(map[string]*MergedMessage)
+	state := NewState()
 
 	for {
 		msg := <-in
 
-		fmt.Printf("Message for device %v on T %v. Raw message: %s\n", msg.DataPoint.DeviceId, msg.DataPoint.Time, string(msg.RawMessage))
-
-		messageState := state[msg.DataPoint.DeviceId]
+		deviceId := msg.DataPoint.DeviceId
+		messageState := state.get(deviceId)
 
 		// No previous state. Let's create the state.
-		if (messageState == nil) {
-			rawMessages := make([][]byte, 1)
-			rawMessages[0] = msg.RawMessage
-
-			state[msg.DataPoint.DeviceId] = createEmptyState(msg.DataPoint, msg.RawMessage)
+		if messageState == nil {
+			state.initialize(deviceId, msg.DataPoint, msg.RawMessage)
 			continue
 		}
 
 		// If the new data point is not for the same time let's flush the previous data and create the new state
-		// TODO: stract to methods?
-		if (msg.DataPoint.Time != messageState.DataPoint.Time) {
+		if msg.DataPoint.Time != messageState.DataPoint.Time {
 			out <- messageState
-			state[msg.DataPoint.DeviceId] = nil
-			state[msg.DataPoint.DeviceId] = createEmptyState(msg.DataPoint, msg.RawMessage)
+			state.initialize(deviceId, msg.DataPoint, msg.RawMessage)
 			continue
 		}
 
 		// In all other cases we are merging a new message
-		rawMessages := append(state[msg.DataPoint.DeviceId].RawMessages, msg.RawMessage)
-		state[msg.DataPoint.DeviceId].RawMessages = rawMessages
+		state.appendMessage(deviceId, msg.RawMessage)
 	}
-}
-
-func createEmptyState(dataPoint DataPoint, msg []byte) *MergedMessage {
-	rawMessages := make([][]byte, 1)
-	rawMessages[0] = msg
-
-	return &MergedMessage{DataPoint: dataPoint, RawMessages: rawMessages}
 }

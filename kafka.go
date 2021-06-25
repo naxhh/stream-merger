@@ -4,76 +4,88 @@ import (
 	"encoding/json"
 	"fmt"
 	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
-	"sync"
+	"time"
 )
 
-func consumer(consumer *kafka.Consumer, out chan<- *Message, wg *sync.WaitGroup) {
-	defer wg.Done()
+func consumer(consumer *kafka.Consumer, out chan<- *Message, quit <-chan chan struct{}) {
 	defer consumer.Close()
 
-	// TODO: move to its own procedure
-	// TODO: close on signal
 	for {
-		fmt.Printf("Waiting for message\n")
-		msg, err := consumer.ReadMessage(-1)
-		if err == nil {
-			dataPoint := DataPoint{}
+		select {
+		case ack := <-quit:
+			fmt.Printf("Closing consumer\n")
+			ack <- struct{}{}
+			return
+		default:
+			msg, err := consumer.ReadMessage(1 * time.Second)
+			if err == nil {
+				dataPoint := DataPoint{}
 
-			if err := json.Unmarshal(msg.Value, &dataPoint); err != nil {
-				fmt.Printf("Invalid data point discarded")
+				if err := json.Unmarshal(msg.Value, &dataPoint); err != nil {
+					fmt.Printf("Invalid data point discarded")
+				} else {
+					// TODO: which type of message is this one?
+					out <- &Message{DataPoint: dataPoint, RawMessage: msg.Value}
+				}
 			} else {
-				// TODO: which type of message is this one?
-				out <- &Message{DataPoint: dataPoint, RawMessage: msg.Value}
+				// The client will automatically try to recover from all errors.
+				fmt.Printf("Consumer error: %v (%v)\n", err, msg)
 			}
-		} else {
-			// The client will automatically try to recover from all errors.
-			fmt.Printf("Consumer error: %v (%v)\n", err, msg)
 		}
 	}
 }
 
-func producer(producer *kafka.Producer, topic string, in <-chan *MergedMessage, wg *sync.WaitGroup) {
-	defer wg.Done()
+func producer(producer *kafka.Producer, topic string, in <-chan *MergedMessage, quit <-chan chan struct{}) {
 	defer producer.Close()
 
 	for {
-		message := <-in
-		marshalledMessage, err := json.Marshal(message)
+		select {
+		case ack := <-quit:
+			fmt.Printf("Closing producer\n")
+			ack <- struct{}{}
 
-		if err != nil {
-			fmt.Printf("Invalid merged message, can't marshal")
-			continue
+			return
+		case message := <-in:
+			marshalledMessage, err := json.Marshal(message)
+
+			if err != nil {
+				fmt.Printf("Invalid merged message, can't marshal")
+				continue
+			}
+
+			// TODO: haven't checked how to produce on partition based on key
+			producer.Produce(&kafka.Message{
+				TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+				Value:          marshalledMessage,
+			}, nil)
+
+			producer.Flush(15 * 1000)
 		}
-
-		// TODO: haven't checked how to produce on partition based on key
-		producer.Produce(&kafka.Message{
-			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-			Value:          marshalledMessage,
-		}, nil)
-
-		producer.Flush(15 * 1000)
 	}
 }
 
-func createConsumer() *kafka.Consumer {
+func createConsumer(topics []string) *kafka.Consumer {
 	consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers": "kafka",
 		"group.id":          "stream-merger-local",
 		"auto.offset.reset": "earliest",
-		// TODO: review other options
 	})
 
 	if err != nil {
 		panic(err)
 	}
 
-	// TODO: "position", "temperature" ,"power"
-	consumer.SubscribeTopics([]string{"temperature"}, nil)
+	consumer.SubscribeTopics(topics, nil)
 	return consumer
 }
 
 func createProducer() *kafka.Producer {
-	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{
+		"bootstrap.servers": "localhost",
+		"linger.ms":         10,
+		"acks":              "all",
+	})
+
 	if err != nil {
 		panic(err)
 	}

@@ -18,9 +18,9 @@ type Message struct {
 	RawMessage []byte
 }
 
-type MergedMessage struct {
-	DataPoint   DataPoint
-	RawMessages [][]byte
+type MessageTuple struct {
+	Key      string
+	Messages [][]byte
 }
 
 func main() {
@@ -29,7 +29,7 @@ func main() {
 	kafkaProducer := createProducer()
 
 	mergerChan := make(chan *Message, 100)
-	mergerOutChan := make(chan *MergedMessage, 100)
+	mergerOutChan := make(chan *MessageTuple, 100)
 
 	consumerClose := make(chan chan struct{})
 	mergerClose := make(chan chan struct{})
@@ -38,7 +38,7 @@ func main() {
 
 	go signalHandling(consumerClose, mergerClose, producerClose, &wg)
 	go consumer(kafkaConsumer, mergerChan, consumerClose)
-	go merger(mergerChan, mergerOutChan, mergerClose)
+	go merger(mergerChan, mergerOutChan, mergerClose, currentBucket)
 	go producer(kafkaProducer, "output_merged", mergerOutChan, producerClose)
 
 	fmt.Printf("Running...\n")

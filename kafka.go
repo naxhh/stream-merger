@@ -22,20 +22,20 @@ func consumer(consumer *kafka.Consumer, out chan<- *Message, quit <-chan chan st
 				dataPoint := DataPoint{}
 
 				if err := json.Unmarshal(msg.Value, &dataPoint); err != nil {
-					fmt.Printf("Invalid data point discarded")
+					fmt.Println("Invalid data point discarded")
 				} else {
 					// TODO: which type of message is this one?
 					out <- &Message{DataPoint: dataPoint, RawMessage: msg.Value}
 				}
 			} else {
 				// The client will automatically try to recover from all errors.
-				fmt.Printf("Consumer error: %v (%v)\n", err, msg)
+				//fmt.Printf("Consumer error: %v (%v)\n", err, msg)
 			}
 		}
 	}
 }
 
-func producer(producer *kafka.Producer, topic string, in <-chan *MergedMessage, quit <-chan chan struct{}) {
+func producer(producer *kafka.Producer, topic string, in <-chan *MessageTuple, quit <-chan chan struct{}) {
 	defer producer.Close()
 
 	for {
@@ -46,17 +46,18 @@ func producer(producer *kafka.Producer, topic string, in <-chan *MergedMessage, 
 
 			return
 		case message := <-in:
-			marshalledMessage, err := json.Marshal(message)
+			// TODO: noticed this gets base64 encoded. Not cool but keeping it as low prio to fix.
+			marshalledMessage, err := json.Marshal(message.Messages)
 
 			if err != nil {
-				fmt.Printf("Invalid merged message, can't marshal")
+				fmt.Printf("Message can't marshal")
 				continue
 			}
 
-			// TODO: haven't checked how to produce on partition based on key
 			producer.Produce(&kafka.Message{
 				TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 				Value:          marshalledMessage,
+				Key:            []byte(message.Key),
 			}, nil)
 
 			producer.Flush(15 * 1000)

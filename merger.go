@@ -2,52 +2,66 @@ package main
 
 import (
 	"fmt"
+	"time"
 )
 
+var currentBucket = func() int64 { return time.Now().Unix() / 60 }
+
 type State struct {
-	storage map[string]*MergedMessage
+	bucket          int64
+	storage         map[string][][]byte
+	out             chan<- *MessageTuple
+	currentBucketFn func() int64
 }
 
-func NewState() *State {
-	storage := make(map[string]*MergedMessage)
+func NewState(out chan<- *MessageTuple, currentBucketFn func() int64) *State {
+	bucket := currentBucketFn()
+	storage := make(map[string][][]byte)
 
-	return &State{storage: storage}
+	return &State{storage: storage, bucket: bucket, out: out, currentBucketFn: currentBucketFn}
 }
 
-func (s *State) initialize(deviceId string, dataPoint DataPoint, msg []byte) {
-	rawMessages := make([][]byte, 1)
-	rawMessages[0] = msg
-
-	s.storage[deviceId] = &MergedMessage{DataPoint: dataPoint, RawMessages: rawMessages}
+func (s *State) initialize(deviceId string, msg *Message) {
+	s.storage[deviceId] = [][]byte{msg.RawMessage}
 }
 
-func (s *State) get(deviceId string) *MergedMessage {
+func (s *State) get(deviceId string) [][]byte {
 	return s.storage[deviceId]
 }
 
-func (s *State) appendMessage(deviceId string, msg []byte) {
-	rawMessages := append(s.storage[deviceId].RawMessages, msg)
-	s.storage[deviceId].RawMessages = rawMessages
+func (s *State) appendMessage(deviceId string, msg *Message) {
+	messages := append(s.storage[deviceId], msg.RawMessage)
+	s.storage[deviceId] = messages
 }
 
-func (s *State) getState() map[string]*MergedMessage {
-	return s.storage
+func (s *State) bookkeeping() {
+	maybeNewBucket := s.currentBucketFn()
+
+	if s.bucket == maybeNewBucket {
+		return
+	}
+
+	s.flush()
+	s.bucket = maybeNewBucket
 }
 
-// TODO: aggregate the ordered messages into 1-minute batches which are sent to an output stream
-// We are now just grouping until a new T comes in. We should change a bit the algo.
-// We also will need some TTL checking for eficiency
-func merger(in <-chan *Message, out chan<- *MergedMessage, quit <-chan chan struct{}) {
-	state := NewState()
+func (s *State) flush() {
+	for key, messages := range s.storage {
+		s.out <- &MessageTuple{Key: key, Messages: messages}
+	}
+
+	s.storage = make(map[string][][]byte)
+}
+
+func merger(in <-chan *Message, out chan<- *MessageTuple, quit <-chan chan struct{}, currentBucketFn func() int64) {
+	state := NewState(out, currentBucketFn)
 
 	for {
 		select {
 		case ack := <-quit:
 			fmt.Printf("Flushing merger\n")
 
-			for _, deviceState := range state.getState() {
-				out <- deviceState
-			}
+			state.flush()
 
 			fmt.Printf("Closing merger\n")
 			ack <- struct{}{}
@@ -58,21 +72,15 @@ func merger(in <-chan *Message, out chan<- *MergedMessage, quit <-chan chan stru
 			deviceId := msg.DataPoint.DeviceId
 			messageState := state.get(deviceId)
 
-			// No previous state. Let's create the state.
+			// No previous state. Let's create it.
 			if messageState == nil {
-				state.initialize(deviceId, msg.DataPoint, msg.RawMessage)
+				state.initialize(deviceId, msg)
+				state.bookkeeping()
 				continue
 			}
 
-			// If the new data point is not for the same time let's flush the previous data and create the new state
-			if msg.DataPoint.Time != messageState.DataPoint.Time {
-				out <- messageState
-				state.initialize(deviceId, msg.DataPoint, msg.RawMessage)
-				continue
-			}
-
-			// In all other cases we are merging a new message
-			state.appendMessage(deviceId, msg.RawMessage)
+			state.appendMessage(deviceId, msg)
+			state.bookkeeping()
 		}
 	}
 }

@@ -64,7 +64,6 @@ func signalHandling(
 		syscall.SIGILL,
 		syscall.SIGTRAP,
 		syscall.SIGABRT,
-		syscall.SIGEMT,
 		syscall.SIGSYS,
 	)
 

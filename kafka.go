@@ -82,7 +82,7 @@ func createConsumer(topics []string) *kafka.Consumer {
 
 func createProducer() *kafka.Producer {
 	producer, err := kafka.NewProducer(&kafka.ConfigMap{
-		"bootstrap.servers": "localhost",
+		"bootstrap.servers": "kafka",
 		"linger.ms":         10,
 		"acks":              "all",
 	})
